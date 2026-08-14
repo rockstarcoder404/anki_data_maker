@@ -4,12 +4,17 @@
 data/jlpt-n1-grammar-test/chapter-6.md と同形式のMarkdownを読み込み、
 Cloze(穴埋め)形式のCSVを出力する。
 
-CSVフィールド（ヘッダ行なし・Text, Back Extra, Tags の3列）:
-  - Text: 問題文（「（　　　）」を {{c1::正解}} に置換）+ 選択肢
+出力先はノートタイプ「穴埋め（選択肢シャッフル）」を想定しており、
+選択肢は Choices フィールドに入れてカードテンプレートのJSが毎回シャッフルする。
+
+CSVフィールド（Text, Back Extra, Choices, Tags の4列）:
+  - Text: 問題文（「（　　　）」を {{c1::正解}} に置換）。選択肢は含めない
   - Back Extra: 常に空文字列
+  - Choices: 選択肢を「|」区切りで並べたもの（出題順のまま）
   - Tags: 固定タグ「N1文法」+ 文法項目（～を除いた部分）
     文法項目は各問題の「- **[タグ: ～〇〇]**」行から取得する。
     タグ行がない場合は見出し「【～〇〇】」からのフォールバック（旧形式）。
+  先頭にAnki用のヘッダ指示行（#separator など）を出力する。
 
 使い方:
   python3 md_to_anki_csv.py data/jlpt-n1-grammar-test/chapter-6.md
@@ -54,9 +59,9 @@ def normalize_tag(raw: str) -> str:
     return re.sub(r"[～\s　]", "", raw)
 
 
-def parse_markdown(path: Path) -> list[tuple[str, str]]:
-    """Markdownを解析して (Text, Tags) のリストを返す。"""
-    rows: list[tuple[str, str]] = []
+def parse_markdown(path: Path) -> list[tuple[str, str, str]]:
+    """Markdownを解析して (Text, Choices, Tags) のリストを返す。"""
+    rows: list[tuple[str, str, str]] = []
     grammar_tag: str | None = None  # 見出し由来のフォールバック用タグ（旧形式）
     question: str | None = None
     question_line = 0
@@ -82,14 +87,14 @@ def parse_markdown(path: Path) -> list[tuple[str, str]]:
             cloze = RE_BLANK.sub(
                 "{{c1::" + choices[answer_key] + "}}", question, count=1
             )
-            text = cloze + "<br><br>" + "<br>".join(choices.values())
+            choices_field = "|".join(choices.values())
             tag = question_tag or grammar_tag
             if tag:
                 tags = f"{FIXED_TAG} {tag}"
             else:
                 warn(f"{path.name}:{question_line} 文法項目が不明のためタグは{FIXED_TAG}のみ")
                 tags = FIXED_TAG
-            rows.append((text, tags))
+            rows.append((cloze, choices_field, tags))
         question = None
         choices = {}
         answer_key = None
@@ -141,15 +146,22 @@ def parse_markdown(path: Path) -> list[tuple[str, str]]:
     return rows
 
 
-def write_csv(rows: list[tuple[str, str]], out_path: Path) -> None:
-    """ANKIインポート用CSVを書き出す（Textのみ引用符で囲む）。
+def write_csv(rows: list[tuple[str, str, str]], out_path: Path) -> None:
+    """ANKIインポート用CSVを書き出す（Text と Choices を引用符で囲む）。
 
-    フィールドは Text, Back Extra, Tags の3列。Back Extra は常に空。
-    ヘッダ行はANKIインポート時にデータとして取り込まれてしまうため出力しない。
+    フィールドは Text, Back Extra, Choices, Tags の4列。Back Extra は常に空。
+    先頭の「#」で始まる行はAnkiがヘッダ指示として解釈する（データにはならない）。
     """
     with out_path.open("w", encoding="utf-8", newline="\n") as f:
-        for text, tags in rows:
-            f.write('"' + text.replace('"', '""') + '",,' + tags + "\n")
+        f.write("#separator:Comma\n")
+        f.write("#html:true\n")
+        f.write("#tags column:4\n")
+        for text, choices, tags in rows:
+            f.write(
+                '"' + text.replace('"', '""') + '",,'
+                + '"' + choices.replace('"', '""') + '",'
+                + tags + "\n"
+            )
 
 
 def main() -> None:
